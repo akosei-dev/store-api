@@ -129,3 +129,67 @@ def delete_store(
             detail=f"Store '{store_id}' was not found.",
         )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+from typing import Literal
+from sqlalchemy import or_, func, select
+from sqlalchemy.orm import Session
+
+from app.models import Store  # adjust to your actual model import
+
+
+class StoreRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def list_stores(
+        self,
+        q: str | None = None,
+        city: str | None = None,
+        category: str | None = None,
+        is_active: bool | None = None,
+        sort: Literal["name", "-name", "created_at", "-created_at"] = "-created_at",
+        skip: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[Store], int]:
+        query = select(Store)
+
+        # --- Filters ---
+        if q:
+            pattern = f"%{q}%"
+            query = query.where(
+                or_(
+                    Store.name.ilike(pattern),
+                    Store.description.ilike(pattern),
+                    Store.city.ilike(pattern),
+                )
+            )
+
+        if city:
+            query = query.where(func.lower(Store.city) == city.lower())
+
+        if category:
+            query = query.where(Store.category == category)
+
+        if is_active is not None:
+            query = query.where(Store.is_active == is_active)
+
+        # --- Total count (before pagination) ---
+        count_query = select(func.count()).select_from(query.subquery())
+        total = self.db.execute(count_query).scalar_one()
+
+        # --- Sorting ---
+        sort_map = {
+            "name": Store.name.asc(),
+            "-name": Store.name.desc(),
+            "created_at": Store.created_at.asc(),
+            "-created_at": Store.created_at.desc(),
+        }
+        query = query.order_by(sort_map[sort])
+
+        # --- Pagination ---
+        query = query.offset(skip).limit(limit)
+
+        items = self.db.execute(query).scalars().all()
+
+        return list(items), total
